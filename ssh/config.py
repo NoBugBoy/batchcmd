@@ -1,10 +1,10 @@
-import sys
-import time
+import io
+
 import paramiko
 import re
 import threading
 
-from ssh import colors, hostparser
+from ssh import colors
 
 ip_pattern = r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
 
@@ -84,10 +84,12 @@ class SSH(threading.Thread):
 
     def print(self):
         print(
-            f"{colors.yellow} batchCMD group=[{self._group}] host=[{self._ip}] command=[{self._defaultCommand}] output => \n {colors.blue} {self._data} {colors.clear}")
+            f"{colors.yellow} batchCMD group=[{self._group}] host=[{self._ip}] command=[{self._defaultCommand}] "
+            f"output => \n {colors.blue} {self._data} {colors.clear}")
         self._data = ''
 
     def initCheck(self):
+        global fo
         if re.match(ip_pattern, self._ip) and self._username is not None:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -98,48 +100,23 @@ class SSH(threading.Thread):
                                    timeout=10, )
                     self._status = 1
                 except Exception as e:
-                    print(f' {colors.red} {self._ip} {e} {colors.clear}')
+                    print(f' {colors.red} {self._ip} {str(e)} {colors.clear}')
                     return
                 print(f"{colors.green} {self._ip}  connected {colors.clear}")
                 self._client = client
             elif self._privateKey is not None:
                 print(f"{self._ip}  start connecting on private key...")
                 try:
-                    client.connect(hostname=self._ip, port=22, username=self._username, pkey=self._privateKey,
+                    fo = open(self._privateKey, "r")
+                    pk = paramiko.RSAKey.from_private_key(fo)
+                    client.connect(hostname=self._ip, port=22, username=self._username, pkey=pk,
                                    timeout=10)
                     self._status = 1
                 except Exception as e:
                     print(f'{colors.red} {self._ip} {str(e)} {colors.clear}')
                     return
+                finally:
+                    if fo is not None:
+                        fo.close()
                 print(f"{colors.green} {self._ip}  connected {colors.clear}")
                 self._client = client
-
-
-if __name__ == '__main__':
-    sshList = []
-    sshArray = hostparser.parserSSH('web')
-    if sshArray is not None:
-        for ssh in sshArray:
-            if ssh['isPassword']:
-                sshList.append(SSH(ssh['host'], ssh['username'], ssh['value'], None, 1, "web", 'ls'))
-            else:
-                sshList.append(SSH(ssh['host'], ssh['username'], None, ssh['value'], 1, "web", 'ls'))
-        run = True
-        for ssh in sshList:
-            ssh.start()
-
-        try:
-            while run:
-                command = input('\n')
-                for ssh in sshList:
-                    if command == '':
-                        continue
-                    if command == 'cc':
-                        ssh.exec("\x03")
-                    if command == 'exit':
-                        ssh.exec(command)
-                        run = False
-                    else:
-                        ssh.exec(command)
-        except KeyboardInterrupt as e:
-            pass
