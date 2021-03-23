@@ -2,6 +2,7 @@ import io
 
 import paramiko
 import re
+import random
 import threading
 
 from ssh import colors
@@ -10,12 +11,16 @@ ip_pattern = r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
 
 
 class SSH(threading.Thread):
-    def __init__(self, ip, username, password, privateKey, types, group, command):
+    def __init__(self, ip, username, password, privateKey, types, group, command, function, fromPath, toPath):
         super().__init__()
         self.setDaemon(True)
+        self._function = function
+        self._fromPath = fromPath
+        self._toPath = toPath
         self._types = types
         self._ip = ip
         self._client = None
+        self._sftp_client = None
         self._group = group
         self._username = username
         self._password = password
@@ -47,7 +52,16 @@ class SSH(threading.Thread):
         if self._client is None:
             print(f'{colors.red} {self._ip} >>> 连接初始化失败 {colors.clear}')
             return
+        if self._function is not None:
+            # upload or download file
+            self.runByType()
+            self.close()
+            return
         if self._types == 0:
+            if self._defaultCommand is None:
+                print('no command')
+                self.close()
+                return
             stdin, stdout, stderr = self._client.exec_command(self._defaultCommand)
 
             if stdout is None:
@@ -64,6 +78,7 @@ class SSH(threading.Thread):
                 text = stdout.decode('utf-8')
                 if self._defaultCommand.strip() == 'exit':
                     print(f"{colors.yellow} group=[{self._group}] host=[{self._ip}]  bye ~ ")
+                    self.close()
                     break
                 else:
                     if text.strip().endswith(self._defaultCommand):
@@ -78,9 +93,28 @@ class SSH(threading.Thread):
 
     def close(self):
         self._client.close()
+        self._sftp_client.close()
 
     def runByType(self):
-        pass
+        if self._fromPath is None:
+            print("formPath can not be none")
+            return
+        if self._toPath is None:
+            print("toPath can not be none")
+            return
+        if self._function == 'put':
+            print(f"from {self._fromPath} upload to {self._toPath} start...")
+            try:
+                self._sftp_client.put(self._fromPath, self._toPath)
+                print(f"from {self._fromPath} upload to {self._toPath} successful!")
+            except Exception as e:
+                print(f"from {self._fromPath} upload to {self._toPath} error! {e}")
+        elif self._function == 'get':
+            try:
+                self._sftp_client.get(self._fromPath, self._toPath + str(random.randint(0, 999)))
+                print(f"from {self._fromPath} download to {self._toPath} successful!")
+            except Exception as e:
+                print(f"from {self._fromPath} download to {self._toPath} error! {e}")
 
     def print(self):
         print(
@@ -103,6 +137,9 @@ class SSH(threading.Thread):
                     print(f' {colors.red} {self._ip} {str(e)} {colors.clear}')
                     return
                 print(f"{colors.green} {self._ip}  connected {colors.clear}")
+                sftp_client = paramiko.SFTPClient.from_transport(client.get_transport())
+                self._sftp_client = sftp_client
+                print(f"{self._ip} sftp stared...")
                 self._client = client
             elif self._privateKey is not None:
                 print(f"{self._ip}  start connecting on private key...")
@@ -119,4 +156,7 @@ class SSH(threading.Thread):
                     if fo is not None:
                         fo.close()
                 print(f"{colors.green} {self._ip}  connected {colors.clear}")
+                sftp_client = paramiko.SFTPClient.from_transport(client.get_transport())
+                self._sftp_client = sftp_client
+                print(f"{self._ip} sftp stared...")
                 self._client = client
